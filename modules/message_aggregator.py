@@ -20,6 +20,7 @@ class MessageAggregator(torch.nn.Module):
     :param messages: A tensor of shape [batch_size, message_length]
     :param timestamps A tensor of shape [batch_size]
     :return: A tensor of shape [n_unique_node_ids, message_length] with the aggregated messages
+    @xzl) incorrect, see below. 
     """
 
   def group_by_id(self, node_ids, messages, timestamps):
@@ -35,6 +36,8 @@ class LastMessageAggregator(MessageAggregator):
   def __init__(self, device):
     super(LastMessageAggregator, self).__init__(device)
 
+  # xzl) @messages is a dict: nodeid->((msg1,t1),(msg2,t2)...). cf: get_raw_messages()
+  #   @node_ids may contain replicas? 
   def aggregate(self, node_ids, messages):
     """Only keep the last message for each node"""    
     unique_node_ids = np.unique(node_ids)
@@ -61,6 +64,7 @@ class MeanMessageAggregator(MessageAggregator):
 
   def aggregate(self, node_ids, messages):
     """Only keep the last message for each node"""
+    #xzl) mean, not the last
     unique_node_ids = np.unique(node_ids)
     unique_messages = []
     unique_timestamps = []
@@ -72,6 +76,7 @@ class MeanMessageAggregator(MessageAggregator):
       if len(messages[node_id]) > 0:
         n_messages += len(messages[node_id])
         to_update_node_ids.append(node_id)
+        # xzl) stack then mean(dim=0) -- meaning dimension-wise mean??
         unique_messages.append(torch.mean(torch.stack([m[0] for m in messages[node_id]]), dim=0))
         unique_timestamps.append(messages[node_id][-1][1])
 

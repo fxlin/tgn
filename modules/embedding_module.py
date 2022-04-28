@@ -5,6 +5,7 @@ import math
 
 from model.temporal_attention import TemporalAttentionLayer
 
+# xzl: code well structured...!!
 
 class EmbeddingModule(nn.Module):
   def __init__(self, node_features, edge_features, memory, neighbor_finder, time_encoder, n_layers,
@@ -60,7 +61,7 @@ class TimeEmbedding(EmbeddingModule):
 
     return source_embeddings
 
-
+# xzl: embedding considering neighbohood
 class GraphEmbedding(EmbeddingModule):
   def __init__(self, node_features, edge_features, memory, neighbor_finder, time_encoder, n_layers,
                n_node_features, n_edge_features, n_time_features, embedding_dimension, device,
@@ -77,18 +78,23 @@ class GraphEmbedding(EmbeddingModule):
                         use_time_proj=True):
     """Recursive implementation of curr_layers temporal graph attention layers.
 
-    src_idx_l [batch_size]: users / items input ids.
+    src_idx_l [batch_size]: users / items input ids.   (xzl: source_nodes
     cut_time_l [batch_size]: scalar representing the instant of the time where we want to extract the user / item representation.
-    curr_layers [scalar]: number of temporal convolutional layers to stack.
+    (xzl: ^ timestamps
+
+    curr_layers [scalar]: number of temporal convolutional layers to stack. (xzl: ^ n_layers
     num_neighbors [scalar]: number of temporal neighbor to consider in each convolutional layer.
     """
 
     assert (n_layers >= 0)
 
+    # xzl: assemble tensors to upload to GPU
+    # print("xzl: timestamps for the batch", timestamps)    #xzl: still absolute values.
     source_nodes_torch = torch.from_numpy(source_nodes).long().to(self.device)
     timestamps_torch = torch.unsqueeze(torch.from_numpy(timestamps).float().to(self.device), dim=1)
 
     # query node always has the start time -> time span == 0
+    #    xzl:  what's "query node"?
     source_nodes_time_embedding = self.time_encoder(torch.zeros_like(
       timestamps_torch))
 
@@ -97,6 +103,7 @@ class GraphEmbedding(EmbeddingModule):
     if self.use_memory:
       source_node_features = memory[source_nodes, :] + source_node_features
 
+    # xzl) layer 0 input: node feature + memory
     if n_layers == 0:
       return source_node_features
     else:
@@ -110,11 +117,12 @@ class GraphEmbedding(EmbeddingModule):
 
       edge_idxs = torch.from_numpy(edge_idxs).long().to(self.device)
 
-      edge_deltas = timestamps[:, np.newaxis] - edge_times
+      edge_deltas = timestamps[:, np.newaxis] - edge_times # xzl) current time - edge time
 
       edge_deltas_torch = torch.from_numpy(edge_deltas).float().to(self.device)
 
       neighbors = neighbors.flatten()
+      # xzl: recurse to compute next hop neighbord embeddings...
       neighbor_embeddings = self.compute_embedding(memory,
                                                    neighbors,
                                                    np.repeat(timestamps, n_neighbors),
@@ -127,8 +135,9 @@ class GraphEmbedding(EmbeddingModule):
 
       edge_features = self.edge_features[edge_idxs, :]
 
-      mask = neighbors_torch == 0
+      mask = neighbors_torch == 0 # xzl) for padded neighbors
 
+      # xzl: agg from: neighbor embeddings, edge time, source time --> source embeddings
       source_embedding = self.aggregate(n_layers, source_node_features,
                                         source_nodes_time_embedding,
                                         neighbor_embeddings,
@@ -138,6 +147,7 @@ class GraphEmbedding(EmbeddingModule):
 
       return source_embedding
 
+  # xzl: @aggregate can overriden by subclass
   def aggregate(self, n_layers, source_node_features, source_nodes_time_embedding,
                 neighbor_embeddings,
                 edge_time_embeddings, edge_features, mask):
@@ -167,9 +177,12 @@ class GraphSumEmbedding(GraphEmbedding):
       [torch.nn.Linear(embedding_dimension + n_node_features + n_time_features,
                        embedding_dimension) for _ in range(n_layers)])
 
+  #xzl) caller already adds memory to @source_node_features 
   def aggregate(self, n_layer, source_node_features, source_nodes_time_embedding,
                 neighbor_embeddings,
                 edge_time_embeddings, edge_features, mask):
+    # xzl: cat neighbors, sum, relu. then cat sources || neighbors, linear
+    # @dim: the dimension over which the tensors are concatenated
     neighbors_features = torch.cat([neighbor_embeddings, edge_time_embeddings, edge_features],
                                    dim=2)
     neighbor_embeddings = self.linear_1[n_layer - 1](neighbors_features)
@@ -195,6 +208,7 @@ class GraphAttentionEmbedding(GraphEmbedding):
                                                   n_heads, dropout,
                                                   use_memory)
 
+    # xzl: put together @n_layers of attn layers...
     self.attention_models = torch.nn.ModuleList([TemporalAttentionLayer(
       n_node_features=n_node_features,
       n_neighbors_features=n_node_features,
@@ -219,7 +233,7 @@ class GraphAttentionEmbedding(GraphEmbedding):
 
     return source_embedding
 
-
+# xzl) a global func
 def get_embedding_module(module_type, node_features, edge_features, memory, neighbor_finder,
                          time_encoder, n_layers, n_node_features, n_edge_features, n_time_features,
                          embedding_dimension, device,

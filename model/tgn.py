@@ -36,7 +36,7 @@ class TGN(torch.nn.Module):
 
     self.n_node_features = self.node_raw_features.shape[1]
     self.n_nodes = self.node_raw_features.shape[0]
-    self.n_edge_features = self.edge_raw_features.shape[1]
+    self.n_edge_features = self.edge_raw_features.shape[1]  # xzl) edge feat dimension?
     self.embedding_dimension = self.n_node_features
     self.n_neighbors = n_neighbors
     self.embedding_module_type = embedding_module_type
@@ -59,6 +59,7 @@ class TGN(torch.nn.Module):
       raw_message_dimension = 2 * self.memory_dimension + self.n_edge_features + \
                               self.time_encoder.dimension
       message_dimension = message_dimension if message_function != "identity" else raw_message_dimension
+      # xzl: whole graph memory, for each node
       self.memory = Memory(n_nodes=self.n_nodes,
                            memory_dimension=self.memory_dimension,
                            input_dimension=message_dimension,
@@ -69,6 +70,7 @@ class TGN(torch.nn.Module):
       self.message_function = get_message_function(module_type=message_function,
                                                    raw_message_dimension=raw_message_dimension,
                                                    message_dimension=message_dimension)
+      # xzl: GRU/RNN... only has weights, no memory inside
       self.memory_updater = get_memory_updater(module_type=memory_updater_type,
                                                memory=self.memory,
                                                message_dimension=message_dimension,
@@ -94,6 +96,7 @@ class TGN(torch.nn.Module):
                                                  n_neighbors=self.n_neighbors)
 
     # MLP to compute probability on an edge given two node embeddings
+    # xzl: decoder, MLP. traineable model.
     self.affinity_score = MergeLayer(self.n_node_features, self.n_node_features,
                                      self.n_node_features,
                                      1)
@@ -107,14 +110,17 @@ class TGN(torch.nn.Module):
     :param destination_nodes [batch_size]: destination ids
     :param negative_nodes [batch_size]: ids of negative sampled destination
     :param edge_times [batch_size]: timestamp of interaction
-    :param edge_idxs [batch_size]: index of interaction
+    :param edge_idxs [batch_size]: index of interaction xzl) used to index edge features
     :param n_neighbors [scalar]: number of temporal neighbor to consider in each convolutional
     layer
     :return: Temporal embeddings for sources, destinations and negatives
+
+    xzl: the reason compute pos/neg together -- batch them in one shot. 
+    afte computing embeddings, update memory 
     """
 
     n_samples = len(source_nodes)
-    nodes = np.concatenate([source_nodes, destination_nodes, negative_nodes])
+    nodes = np.concatenate([source_nodes, destination_nodes, negative_nodes]) #xzl: all nodes
     positives = np.concatenate([source_nodes, destination_nodes])
     timestamps = np.concatenate([edge_times, edge_times, edge_times])
 
@@ -122,7 +128,7 @@ class TGN(torch.nn.Module):
     time_diffs = None
     if self.use_memory:
       if self.memory_update_at_start:
-        # Update memory for all nodes with messages stored in previous batches
+        # Update memory for all nodes with messages stored in previous batches (xzl: a key design)
         memory, last_update = self.get_updated_memory(list(range(self.n_nodes)),
                                                       self.memory.messages)
       else:
@@ -131,6 +137,7 @@ class TGN(torch.nn.Module):
 
       ### Compute differences between the time the memory of a node was last updated,
       ### and the time for which we want to compute the embedding of a node
+      # xzl: why needed? as a baseline?
       source_time_diffs = torch.LongTensor(edge_times).to(self.device) - last_update[
         source_nodes].long()
       source_time_diffs = (source_time_diffs - self.mean_time_shift_src) / self.std_time_shift_src
@@ -145,6 +152,7 @@ class TGN(torch.nn.Module):
                              dim=0)
 
     # Compute the embeddings using the embedding module
+    # xzl: @nodes has all nodes (src,dest,dest-neg)
     node_embedding = self.embedding_module.compute_embedding(memory=memory,
                                                              source_nodes=nodes,
                                                              timestamps=timestamps,
@@ -162,12 +170,14 @@ class TGN(torch.nn.Module):
         # new messages for them)
         self.update_memory(positives, self.memory.messages)
 
-        assert torch.allclose(memory[positives], self.memory.get_memory(positives), atol=1e-5), \
-          "Something wrong in how the memory was updated"
+        # xzl: online discussion said it's okay to ignore below
+        #assert torch.allclose(memory[positives], self.memory.get_memory(positives), atol=1e-5), \
+        #  "Something wrong in how the memory was updated"
 
         # Remove messages for the positives since we have already updated the memory using them
         self.memory.clear_messages(positives)
 
+      # xzl) fetch msgs only after computing current embeddings...
       unique_sources, source_id_to_messages = self.get_raw_messages(source_nodes,
                                                                     source_node_embedding,
                                                                     destination_nodes,
@@ -220,6 +230,7 @@ class TGN(torch.nn.Module):
 
   def update_memory(self, nodes, messages):
     # Aggregate messages for the same nodes
+    # xzl) first agg then msg func ... is this intentional?
     unique_nodes, unique_messages, unique_timestamps = \
       self.message_aggregator.aggregate(
         nodes,
@@ -248,6 +259,10 @@ class TGN(torch.nn.Module):
 
     return updated_memory, updated_last_update
 
+  # xzl: given "edges", return a dict: source_nodes->((msg1,t1),(msg2,t2)...), 
+  # "raw msg" because each @msg carries lots of info, which is yet to send thorugh the msg func
+  # NB: can be invoked w/ @source_nodes/@dest_nodes swapped. therefore can return mappings from 
+  # dest nodes -> msgs
   def get_raw_messages(self, source_nodes, source_node_embedding, destination_nodes,
                        destination_node_embedding, edge_times, edge_idxs):
     edge_times = torch.from_numpy(edge_times).float().to(self.device)
@@ -268,9 +283,12 @@ class TGN(torch.nn.Module):
     messages = defaultdict(list)
     unique_sources = np.unique(source_nodes)
 
+    # xzl) below expensive...
     for i in range(len(source_nodes)):
       messages[source_nodes[i]].append((source_message[i], edge_times[i]))
 
+    # xzl: @messages is a dict, source_node -> list(m1,m2,m3...)
+    # dest_node not saved??
     return unique_sources, messages
 
   def set_neighbor_finder(self, neighbor_finder):

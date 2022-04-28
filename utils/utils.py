@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-
+# xzl: a simple MLP: 2 linear layers + activation. as the decoder for link prob prediction
 class MergeLayer(torch.nn.Module):
   def __init__(self, dim1, dim2, dim3, dim4):
     super().__init__()
@@ -63,7 +63,7 @@ class EarlyStopMonitor(object):
 
     return self.num_round >= self.max_round
 
-
+# xzl: given src/dst lists, sample random edges (regardless whether they actual exist)
 class RandEdgeSampler(object):
   def __init__(self, src_list, dst_list, seed=None):
     self.seed = None
@@ -87,7 +87,8 @@ class RandEdgeSampler(object):
   def reset_random_state(self):
     self.random_state = np.random.RandomState(self.seed)
 
-
+# xzl: given @Data, build adj lists for all nodes. this is fine because there are only <100k nodes? 
+#   @max_node_idx: ignore node with ids higher than this id
 def get_neighbor_finder(data, uniform, max_node_idx=None):
   max_node_idx = max(data.sources.max(), data.destinations.max()) if max_node_idx is None else max_node_idx
   adj_list = [[] for _ in range(max_node_idx + 1)]
@@ -99,7 +100,8 @@ def get_neighbor_finder(data, uniform, max_node_idx=None):
 
   return NeighborFinder(adj_list, uniform=uniform)
 
-
+# xzl) take @adj_list, sort by timestamp. then given a timestamp (cut time), do a bin 
+# search in the sorted adj list
 class NeighborFinder:
   def __init__(self, adj_list, uniform=False, seed=None):
     self.node_to_neighbors = []

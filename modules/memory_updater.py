@@ -15,6 +15,8 @@ class SequenceMemoryUpdater(MemoryUpdater):
     self.message_dimension = message_dimension
     self.device = device
 
+  # xzl) set memory for given nodes ... called at the end of a batch 
+  #     why still use unique messages to update the memory?? (redundant?)
   def update_memory(self, unique_node_ids, unique_messages, timestamps):
     if len(unique_node_ids) <= 0:
       return
@@ -29,6 +31,8 @@ class SequenceMemoryUpdater(MemoryUpdater):
 
     self.memory.set_memory(unique_node_ids, updated_memory)
 
+  # xzl) compute a new version of memory (w/ buffered msgs), to be called at the start of a batch.
+  # xzl) avoid overwriting the memory in place. reason: temporal consistency across nodes?
   def get_updated_memory(self, unique_node_ids, unique_messages, timestamps):
     if len(unique_node_ids) <= 0:
       return self.memory.memory.data.clone(), self.memory.last_update.data.clone()
@@ -36,6 +40,7 @@ class SequenceMemoryUpdater(MemoryUpdater):
     assert (self.memory.get_last_update(unique_node_ids) <= timestamps).all().item(), "Trying to " \
                                                                                      "update memory to time in the past"
 
+    # xzl) make a clone and work on the clone. 
     updated_memory = self.memory.memory.data.clone()
     updated_memory[unique_node_ids] = self.memory_updater(unique_messages, updated_memory[unique_node_ids])
 

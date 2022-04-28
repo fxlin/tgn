@@ -5,6 +5,7 @@ from pathlib import Path
 import argparse
 
 
+# xzl) return dataframe (interaction events) and features (one for each interaction)
 def preprocess(data_name):
   u_list, i_list, ts_list, label_list = [], [], [], []
   feat_l = []
@@ -39,6 +40,7 @@ def preprocess(data_name):
 def reindex(df, bipartite=True):
   new_df = df.copy()
   if bipartite:
+    # xzl) unifiy u's ids and i's ids. put in the same space. 
     assert (df.u.max() - df.u.min() + 1 == len(df.u.unique()))
     assert (df.i.max() - df.i.min() + 1 == len(df.i.unique()))
 
@@ -46,10 +48,12 @@ def reindex(df, bipartite=True):
     new_i = df.i + upper_u
 
     new_df.i = new_i
+    # xzl) so that ids starts from 1? (not 0) why? 
     new_df.u += 1
     new_df.i += 1
     new_df.idx += 1
   else:
+    # xzl) see above
     new_df.u += 1
     new_df.i += 1
     new_df.idx += 1
@@ -68,10 +72,10 @@ def run(data_name, bipartite=True):
   new_df = reindex(df, bipartite)
 
   empty = np.zeros(feat.shape[1])[np.newaxis, :]
-  feat = np.vstack([empty, feat])
+  feat = np.vstack([empty, feat]) # xzl) just padding. 0th edge feature=empty
 
   max_idx = max(new_df.u.max(), new_df.i.max())
-  rand_feat = np.zeros((max_idx + 1, 172))
+  rand_feat = np.zeros((max_idx + 1, 172)) # xzl) node raw features... all 0s?
 
   new_df.to_csv(OUT_DF)
   np.save(OUT_FEAT, feat)

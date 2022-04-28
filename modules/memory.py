@@ -4,6 +4,12 @@ from torch import nn
 from collections import defaultdict
 from copy import deepcopy
 
+# xzl: 
+# holding: 
+#   a global object containing memory for all nodes; 
+#   messages (a dict, dest node -> messages)
+# wraps around nn.Parameters (self.memory)
+# 
 
 class Memory(nn.Module):
 
@@ -45,6 +51,7 @@ class Memory(nn.Module):
   def get_last_update(self, node_idxs):
     return self.last_update[node_idxs]
 
+  # xzl: a snapshot of memory... and raw messages?
   def backup_memory(self):
     messages_clone = {}
     for k, v in self.messages.items():
@@ -60,9 +67,9 @@ class Memory(nn.Module):
       self.messages[k] = [(x[0].clone(), x[1].clone()) for x in v]
 
   def detach_memory(self):
-    self.memory.detach_()
+    self.memory.detach_() # xzl) no backprop at this point, but self.memory has requires_grad=False already??
 
-    # Detach all stored messages
+    # Detach all stored messages   xzl) why not detach_() in place? immutable?
     for k, v in self.messages.items():
       new_node_messages = []
       for message in v:

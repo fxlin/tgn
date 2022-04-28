@@ -22,6 +22,7 @@ def eval_edge_prediction(model, negative_edge_sampler, data, n_neighbors, batch_
     num_test_instance = len(data.sources)
     num_test_batch = math.ceil(num_test_instance / TEST_BATCH_SIZE)
 
+    # xzl: create batches and send through prediction (@compute_edge_probabilities, encoding and then decoding)
     for k in range(num_test_batch):
       s_idx = k * TEST_BATCH_SIZE
       e_idx = min(num_test_instance, s_idx + TEST_BATCH_SIZE)

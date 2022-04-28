@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 
+# xzl: a learnable model
 
 class TimeEncode(torch.nn.Module):
   # Time Encoding proposed by TGAT
@@ -19,6 +20,7 @@ class TimeEncode(torch.nn.Module):
     # Add dimension at the end to apply linear layer --> [batch_size, seq_len, 1]
     t = t.unsqueeze(dim=2)
 
+    #print("xzl: time encode:t", t)
     # output has shape [batch_size, seq_len, dimension]
     output = torch.cos(self.w(t))
 

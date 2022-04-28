@@ -8,19 +8,10 @@ import numpy as np
 import pickle
 from pathlib import Path
 
-# xzl
-from torch.profiler import profile, record_function, ProfilerActivity
-
 from evaluation.evaluation import eval_edge_prediction
 from model.tgn import TGN
 from utils.utils import EarlyStopMonitor, RandEdgeSampler, get_neighbor_finder
 from utils.data_processing import get_data, compute_time_statistics
-
-# xzl
-def trace_handler(p):
-  output = p.key_averages().table(sort_by="self_cpu_time_total", row_limit=10)
-  print(output)
-  p.export_chrome_trace("./traces/trace_" + str(p.step_num) + ".json")    
 
 torch.manual_seed(0)
 np.random.seed(0)
@@ -72,9 +63,6 @@ parser.add_argument('--use_source_embedding_in_message', action='store_true',
 parser.add_argument('--dyrep', action='store_true',
                     help='Whether to run the dyrep model')
 
-# xzl 
-parser.add_argument('--inference_only', action='store_true',
-                    help='xzl:do inf only, load a trained model')
 
 try:
   args = parser.parse_args()
@@ -97,7 +85,6 @@ TIME_DIM = args.time_dim
 USE_MEMORY = args.use_memory
 MESSAGE_DIM = args.message_dim
 MEMORY_DIM = args.memory_dim
-INFERENCE_ONLY = args.inference_only   # xzl
 
 Path("./saved_models/").mkdir(parents=True, exist_ok=True)
 Path("./saved_checkpoints/").mkdir(parents=True, exist_ok=True)
@@ -108,8 +95,7 @@ get_checkpoint_path = lambda \
 ### set up logger
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger()
-# logger.setLevel(logging.DEBUG)
-logger.setLevel(logging.INFO) # xzl
+logger.setLevel(logging.DEBUG)
 Path("log/").mkdir(parents=True, exist_ok=True)
 fh = logging.FileHandler('log/{}.log'.format(str(time.time())))
 fh.setLevel(logging.DEBUG)
@@ -147,13 +133,7 @@ nn_test_rand_sampler = RandEdgeSampler(new_node_test_data.sources,
                                        seed=3)
 
 # Set device
-if GPU < 0: # xzl  much faster!! 
-  print("xzl: force using cpu")
-  device_string = 'cpu'  
-  torch.set_num_threads(20)
-  torch.set_num_interop_threads(20)
-else:
-  device_string = 'cuda:{}'.format(GPU) if torch.cuda.is_available() else 'cpu'
+device_string = 'cuda:{}'.format(GPU) if torch.cuda.is_available() else 'cpu'
 device = torch.device(device_string)
 
 # Compute time statistics
@@ -185,175 +165,151 @@ for i in range(args.n_runs):
   optimizer = torch.optim.Adam(tgn.parameters(), lr=LEARNING_RATE)
   tgn = tgn.to(device)
 
-  if not INFERENCE_ONLY: 
-    num_instance = len(train_data.sources) # xzl: instances == # of rows in training? 
-    num_batch = math.ceil(num_instance / BATCH_SIZE)
+  num_instance = len(train_data.sources) # xzl: instances == # of rows in training? 
+  num_batch = math.ceil(num_instance / BATCH_SIZE)
 
-    logger.info('num of training instances: {}'.format(num_instance))
-    logger.info('num of batches per epoch: {}'.format(num_batch))
-    idx_list = np.arange(num_instance)
+  logger.info('num of training instances: {}'.format(num_instance))
+  logger.info('num of batches per epoch: {}'.format(num_batch))
+  idx_list = np.arange(num_instance)
 
-    new_nodes_val_aps = []
-    val_aps = []
-    epoch_times = []
-    total_epoch_times = []
-    train_losses = []
+  new_nodes_val_aps = []
+  val_aps = []
+  epoch_times = []
+  total_epoch_times = []
+  train_losses = []
 
-    early_stopper = EarlyStopMonitor(max_round=args.patience)
-    for epoch in range(NUM_EPOCH):
-      start_epoch = time.time()
-      ### Training
+  early_stopper = EarlyStopMonitor(max_round=args.patience)
+  for epoch in range(NUM_EPOCH):
+    start_epoch = time.time()
+    ### Training
 
-      # Reinitialize memory of the model at the start of each epoch
+    # Reinitialize memory of the model at the start of each epoch
+    if USE_MEMORY:
+      tgn.memory.__init_memory__()
+
+    # Train using only training graph
+    tgn.set_neighbor_finder(train_ngh_finder)
+    m_loss = []
+
+    logger.info('start {} epoch'.format(epoch))
+    for k in range(0, num_batch, args.backprop_every):
+      loss = 0
+      optimizer.zero_grad()
+
+      # Custom loop to allow to perform backpropagation only every a certain number of batches
+      for j in range(args.backprop_every):
+        batch_idx = k + j
+
+        if batch_idx >= num_batch:
+          continue
+
+        start_idx = batch_idx * BATCH_SIZE
+        end_idx = min(num_instance, start_idx + BATCH_SIZE)
+        sources_batch, destinations_batch = train_data.sources[start_idx:end_idx], \
+                                            train_data.destinations[start_idx:end_idx]
+        edge_idxs_batch = train_data.edge_idxs[start_idx: end_idx]
+        timestamps_batch = train_data.timestamps[start_idx:end_idx]
+
+        size = len(sources_batch)
+        # xzl: how to ensure these edges are neg?  (sampled sources seem discarded)
+        _, negatives_batch = train_rand_sampler.sample(size) 
+
+        with torch.no_grad():
+          pos_label = torch.ones(size, dtype=torch.float, device=device)
+          neg_label = torch.zeros(size, dtype=torch.float, device=device)
+
+        tgn = tgn.train() # xzl: mark the start of training
+        # xzl: @negatives_batch are neg dest. 
+        pos_prob, neg_prob = tgn.compute_edge_probabilities(sources_batch, destinations_batch, negatives_batch,
+                                                            timestamps_batch, edge_idxs_batch, NUM_NEIGHBORS)
+
+        # xzl: @loss is a tensor. @criterion is a loss func (BCEloss)
+        loss += criterion(pos_prob.squeeze(), pos_label) + criterion(neg_prob.squeeze(), neg_label)
+
+      loss /= args.backprop_every
+
+      loss.backward()
+      optimizer.step()
+      m_loss.append(loss.item())
+
+      # Detach memory after 'args.backprop_every' number of batches so we don't backpropagate to
+      # the start of time   
+      # xzl) meaning what? will backprop in time but not to the very beginning? why??
+      #        
       if USE_MEMORY:
-        tgn.memory.__init_memory__()
+        tgn.memory.detach_memory()
 
-      # Train using only training graph
-      tgn.set_neighbor_finder(train_ngh_finder)
-      m_loss = []
+    epoch_time = time.time() - start_epoch
+    epoch_times.append(epoch_time)
 
-      logger.info('start {} epoch'.format(epoch))
-      with profile(
-        #activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-        activities=[],
-        schedule=torch.profiler.schedule(
-          wait=1,
-          warmup=1,
-          active=2),
-        on_trace_ready=trace_handler,
-        with_stack=True,
-      ) as p:
-        for k in range(0, num_batch, args.backprop_every):
-          loss = 0
-          optimizer.zero_grad()
+    ### Validation
+    # Validation uses the full graph  (xzl: why not the only validation data??)
+    tgn.set_neighbor_finder(full_ngh_finder)
 
-          # Custom loop to allow to perform backpropagation only every a certain number of batches
-          for j in range(args.backprop_every):
-            batch_idx = k + j
+    if USE_MEMORY:
+      # Backup memory at the end of training, so later we can restore it and use it for the
+      # validation on unseen nodes
+      train_memory_backup = tgn.memory.backup_memory()
 
-            if batch_idx >= num_batch:
-              continue
-
-            start_idx = batch_idx * BATCH_SIZE
-            end_idx = min(num_instance, start_idx + BATCH_SIZE)
-            sources_batch, destinations_batch = train_data.sources[start_idx:end_idx], \
-                                                train_data.destinations[start_idx:end_idx]
-            edge_idxs_batch = train_data.edge_idxs[start_idx: end_idx]
-            timestamps_batch = train_data.timestamps[start_idx:end_idx]
-
-            size = len(sources_batch)
-            # xzl: how to ensure these edges are neg?  (sampled sources seem discarded)
-            _, negatives_batch = train_rand_sampler.sample(size) 
-
-            with torch.no_grad():
-              pos_label = torch.ones(size, dtype=torch.float, device=device)
-              neg_label = torch.zeros(size, dtype=torch.float, device=device)
-
-            tgn = tgn.train() # xzl: mark the start of training
-            # xzl: @negatives_batch are neg dest. 
-            #print("xzl: timestamps for the batch", timestamps_batch)
-
-            pos_prob, neg_prob = tgn.compute_edge_probabilities(sources_batch, destinations_batch, negatives_batch,
-                                                                timestamps_batch, edge_idxs_batch, NUM_NEIGHBORS)
-
-            # xzl: @loss is a tensor. @criterion is a loss func (BCEloss)
-            loss += criterion(pos_prob.squeeze(), pos_label) + criterion(neg_prob.squeeze(), neg_label)
-
-          loss /= args.backprop_every
-
-          loss.backward()
-          optimizer.step()
-          m_loss.append(loss.item())
-
-          # Detach memory after 'args.backprop_every' number of batches so we don't backpropagate to
-          # the start of time   
-          # xzl) shallow backprop (in time) ... to avoid excessive memory usage (gradients etc)
-          #        
-          if USE_MEMORY:
-            tgn.memory.detach_memory()
-
-          if k % 100 == 0:
-            print("# batch =", k)
-            #p.step() 
-
-      epoch_time = time.time() - start_epoch
-      epoch_times.append(epoch_time)
-
-      ### Validation
-      # Validation uses the full graph  (xzl: why not the only validation data??)
-      tgn.set_neighbor_finder(full_ngh_finder)
-
-      if USE_MEMORY:
-        # Backup memory at the end of training, so later we can restore it and use it for the
-        # validation on unseen nodes
-        train_memory_backup = tgn.memory.backup_memory()
-
-      # xzl: instead of predicting on all possible links (node pairs), only test on: pos edges (ground truth) and 
-      #   sampled neg edges.     in theory: should test on all neg links. but too many?
-      val_ap, val_auc = eval_edge_prediction(model=tgn,
-                                                negative_edge_sampler=val_rand_sampler,
-                                                data=val_data,
-                                                n_neighbors=NUM_NEIGHBORS)
-      if USE_MEMORY:
-        val_memory_backup = tgn.memory.backup_memory()
-        # Restore memory we had at the end of training to be used when validating on new nodes.
-        # Also backup memory after validation so it can be used for testing (since test edges are
-        # strictly later in time than validation edges)
-        tgn.memory.restore_memory(train_memory_backup)
-
-      # Validate on unseen nodes (xzl: nn=new nodes, why this?)
-      nn_val_ap, nn_val_auc = eval_edge_prediction(model=tgn,
+    val_ap, val_auc = eval_edge_prediction(model=tgn,
                                                             negative_edge_sampler=val_rand_sampler,
-                                                            data=new_node_val_data,
+                                                            data=val_data,
                                                             n_neighbors=NUM_NEIGHBORS)
+    if USE_MEMORY:
+      val_memory_backup = tgn.memory.backup_memory()
+      # Restore memory we had at the end of training to be used when validating on new nodes.
+      # Also backup memory after validation so it can be used for testing (since test edges are
+      # strictly later in time than validation edges)
+      tgn.memory.restore_memory(train_memory_backup)
 
-      if USE_MEMORY:
-        # Restore memory we had at the end of validation
-        tgn.memory.restore_memory(val_memory_backup)
+    # Validate on unseen nodes (xzl: nn=new nodes, why this?)
+    nn_val_ap, nn_val_auc = eval_edge_prediction(model=tgn,
+                                                          negative_edge_sampler=val_rand_sampler,
+                                                          data=new_node_val_data,
+                                                          n_neighbors=NUM_NEIGHBORS)
 
-      new_nodes_val_aps.append(nn_val_ap)
-      val_aps.append(val_ap)
-      train_losses.append(np.mean(m_loss))
+    if USE_MEMORY:
+      # Restore memory we had at the end of validation
+      tgn.memory.restore_memory(val_memory_backup)
 
-      # Save temporary results to disk
-      pickle.dump({
-        "val_aps": val_aps,
-        "new_nodes_val_aps": new_nodes_val_aps,
-        "train_losses": train_losses,
-        "epoch_times": epoch_times,
-        "total_epoch_times": total_epoch_times
-      }, open(results_path, "wb"))
+    new_nodes_val_aps.append(nn_val_ap)
+    val_aps.append(val_ap)
+    train_losses.append(np.mean(m_loss))
 
-      total_epoch_time = time.time() - start_epoch
-      total_epoch_times.append(total_epoch_time)
+    # Save temporary results to disk
+    pickle.dump({
+      "val_aps": val_aps,
+      "new_nodes_val_aps": new_nodes_val_aps,
+      "train_losses": train_losses,
+      "epoch_times": epoch_times,
+      "total_epoch_times": total_epoch_times
+    }, open(results_path, "wb"))
 
-      logger.info('epoch: {} took {:.2f}s'.format(epoch, total_epoch_time))
-      logger.info('Epoch mean loss: {}'.format(np.mean(m_loss)))
-      logger.info(
-        'val auc: {}, new node val auc: {}'.format(val_auc, nn_val_auc))
-      logger.info(
-        'val ap: {}, new node val ap: {}'.format(val_ap, nn_val_ap))
+    total_epoch_time = time.time() - start_epoch
+    total_epoch_times.append(total_epoch_time)
 
-      # Early stopping
-      if early_stopper.early_stop_check(val_ap):
-        logger.info('No improvement over {} epochs, stop training'.format(early_stopper.max_round))
-        logger.info(f'Loading the best model at epoch {early_stopper.best_epoch}')
-        best_model_path = get_checkpoint_path(early_stopper.best_epoch)
-        tgn.load_state_dict(torch.load(best_model_path))
-        logger.info(f'Loaded the best model at epoch {early_stopper.best_epoch} for inference')
-        tgn.eval()
-        break
-      else:
-        torch.save(tgn.state_dict(), get_checkpoint_path(epoch))
-  else:   # xzl: INFERENCE_ONLY. the model must exist
-    tgn.load_state_dict(torch.load(MODEL_SAVE_PATH))  
+    logger.info('epoch: {} took {:.2f}s'.format(epoch, total_epoch_time))
+    logger.info('Epoch mean loss: {}'.format(np.mean(m_loss)))
+    logger.info(
+      'val auc: {}, new node val auc: {}'.format(val_auc, nn_val_auc))
+    logger.info(
+      'val ap: {}, new node val ap: {}'.format(val_ap, nn_val_ap))
+
+    # Early stopping
+    if early_stopper.early_stop_check(val_ap):
+      logger.info('No improvement over {} epochs, stop training'.format(early_stopper.max_round))
+      logger.info(f'Loading the best model at epoch {early_stopper.best_epoch}')
+      best_model_path = get_checkpoint_path(early_stopper.best_epoch)
+      tgn.load_state_dict(torch.load(best_model_path))
+      logger.info(f'Loaded the best model at epoch {early_stopper.best_epoch} for inference')
+      tgn.eval()
+      break
+    else:
+      torch.save(tgn.state_dict(), get_checkpoint_path(epoch))
 
   # Training has finished, we have loaded the best model, and we want to backup its current
   # memory (which has seen validation edges) so that it can also be used when testing on unseen
   # nodes
-  # xzl: this backs up memory & msg stores. 
-  #   @test_data contains both old and new nodes (i.e. unseen in training), while @new_node_test_data
-  #   has only new nodes. reset memory to the end of training --> ensures no msgs/memory about the unseen nodes
   if USE_MEMORY:
     val_memory_backup = tgn.memory.backup_memory()
 
@@ -377,28 +333,20 @@ for i in range(args.n_runs):
     'Test statistics: Old nodes -- auc: {}, ap: {}'.format(test_auc, test_ap))
   logger.info(
     'Test statistics: New nodes -- auc: {}, ap: {}'.format(nn_test_auc, nn_test_ap))
-  
-  if INFERENCE_ONLY: 
-    pickle.dump({
-      "test_ap": test_ap,
-      "new_node_test_ap": nn_test_ap,
-    }, open(results_path, "wb"))
-    logger.info('Inference done')
-  else: 
-    # Save results for this run
-    pickle.dump({
-      "val_aps": val_aps,
-      "new_nodes_val_aps": new_nodes_val_aps,
-      "test_ap": test_ap,
-      "new_node_test_ap": nn_test_ap,
-      "epoch_times": epoch_times,
-      "train_losses": train_losses,
-      "total_epoch_times": total_epoch_times
-    }, open(results_path, "wb"))
+  # Save results for this run
+  pickle.dump({
+    "val_aps": val_aps,
+    "new_nodes_val_aps": new_nodes_val_aps,
+    "test_ap": test_ap,
+    "new_node_test_ap": nn_test_ap,
+    "epoch_times": epoch_times,
+    "train_losses": train_losses,
+    "total_epoch_times": total_epoch_times
+  }, open(results_path, "wb"))
 
-    logger.info('Saving TGN model')
-    if USE_MEMORY:
-      # Restore memory at the end of validation (save a model which is ready for testing)
-      tgn.memory.restore_memory(val_memory_backup)
-    torch.save(tgn.state_dict(), MODEL_SAVE_PATH)
-    logger.info('TGN model saved')
+  logger.info('Saving TGN model')
+  if USE_MEMORY:
+    # Restore memory at the end of validation (save a model which is ready for testing)
+    tgn.memory.restore_memory(val_memory_backup)
+  torch.save(tgn.state_dict(), MODEL_SAVE_PATH)
+  logger.info('TGN model saved')
