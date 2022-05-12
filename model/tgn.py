@@ -23,7 +23,8 @@ class TGN(torch.nn.Module):
                memory_updater_type="gru",
                use_destination_embedding_in_message=False,
                use_source_embedding_in_message=False,
-               dyrep=False):
+               dyrep=False, 
+               mem_node_prob=1, use_fixed_times=False):
     super(TGN, self).__init__()
 
     self.n_layers = n_layers
@@ -35,7 +36,7 @@ class TGN(torch.nn.Module):
     self.edge_raw_features = torch.from_numpy(edge_features.astype(np.float32)).to(device)
 
     self.n_node_features = self.node_raw_features.shape[1]
-    self.n_nodes = self.node_raw_features.shape[0]
+    self.n_nodes = self.node_raw_features.shape[0]    # xzl) num of nodes
     self.n_edge_features = self.edge_raw_features.shape[1]  # xzl) edge feat dimension?
     self.embedding_dimension = self.n_node_features
     self.n_neighbors = n_neighbors
@@ -47,6 +48,7 @@ class TGN(torch.nn.Module):
     self.use_memory = use_memory
     self.time_encoder = TimeEncode(dimension=self.n_node_features)
     self.memory = None
+    self.mem_node_prob = mem_node_prob
 
     self.mean_time_shift_src = mean_time_shift_src
     self.std_time_shift_src = std_time_shift_src
@@ -93,6 +95,7 @@ class TGN(torch.nn.Module):
                                                  device=self.device,
                                                  n_heads=n_heads, dropout=dropout,
                                                  use_memory=use_memory,
+                                                 use_fixed_times=use_fixed_times,
                                                  n_neighbors=self.n_neighbors)
 
     # MLP to compute probability on an edge given two node embeddings
@@ -122,22 +125,27 @@ class TGN(torch.nn.Module):
     n_samples = len(source_nodes)
     nodes = np.concatenate([source_nodes, destination_nodes, negative_nodes]) #xzl: all nodes
     positives = np.concatenate([source_nodes, destination_nodes])
-    timestamps = np.concatenate([edge_times, edge_times, edge_times])
+    timestamps = np.concatenate([edge_times, edge_times, edge_times])     # xzl: ts for an edge... for src/dest/neg(dest) ... ?
 
     memory = None
     time_diffs = None
     if self.use_memory:
       if self.memory_update_at_start:
-        # Update memory for all nodes with messages stored in previous batches (xzl: a key design)
+        # Update memory for all nodes with messages stored in previous batches 
+        # xzl: pull msgs of last batch, cal @memory which is used to cal emeddings 
+        #       only after embeddings are cal, cal @memory again and persist it
+        #     @self.memory.messages is from previous batch        
         memory, last_update = self.get_updated_memory(list(range(self.n_nodes)),
                                                       self.memory.messages)
       else:
+        # xzl: memory already updated at the end of last batch. now just retrieve it
         memory = self.memory.get_memory(list(range(self.n_nodes)))
         last_update = self.memory.last_update
 
       ### Compute differences between the time the memory of a node was last updated,
       ### and the time for which we want to compute the embedding of a node
-      # xzl: why needed? as a baseline?
+      # xzl: for encoding the time. normalize times by mean/std...
+      #       only used for TimeEmbedding (Jodie?). not by GraphSum and GAT embeddings, which uses @timestamps
       source_time_diffs = torch.LongTensor(edge_times).to(self.device) - last_update[
         source_nodes].long()
       source_time_diffs = (source_time_diffs - self.mean_time_shift_src) / self.std_time_shift_src
@@ -152,7 +160,8 @@ class TGN(torch.nn.Module):
                              dim=0)
 
     # Compute the embeddings using the embedding module
-    # xzl: @nodes has all nodes (src,dest,dest-neg)
+    # xzl: @nodes has all nodes (src,dest,dest-neg). @timestamps is for time embeddings
+    #print("------------------ xzl: timestamps size", timestamps.shape)
     node_embedding = self.embedding_module.compute_embedding(memory=memory,
                                                              source_nodes=nodes,
                                                              timestamps=timestamps,
@@ -167,7 +176,7 @@ class TGN(torch.nn.Module):
     if self.use_memory:
       if self.memory_update_at_start:
         # Persist the updates to the memory only for sources and destinations (since now we have
-        # new messages for them)
+        # new messages for them)      xzl: redundant computation?
         self.update_memory(positives, self.memory.messages)
 
         # xzl: online discussion said it's okay to ignore below
@@ -177,7 +186,7 @@ class TGN(torch.nn.Module):
         # Remove messages for the positives since we have already updated the memory using them
         self.memory.clear_messages(positives)
 
-      # xzl) fetch msgs only after computing current embeddings...
+      # xzl) fetch current batch's msgs only after cal current embeddings..., store to self.memory
       unique_sources, source_id_to_messages = self.get_raw_messages(source_nodes,
                                                                     source_node_embedding,
                                                                     destination_nodes,
@@ -230,25 +239,70 @@ class TGN(torch.nn.Module):
 
   def update_memory(self, nodes, messages):
     # Aggregate messages for the same nodes
-    # xzl) first agg then msg func ... is this intentional?
+    # xzl) first agg then msg func ... seems intentional
     unique_nodes, unique_messages, unique_timestamps = \
       self.message_aggregator.aggregate(
         nodes,
         messages)
 
+    # xzl sampling nodes...
+    # print(f"xzl: before sampling. #unique_nodes {len(unique_nodes)}")    
+    if self.mem_node_prob < 0.9999:
+      idx = np.random.choice(np.arange(len(unique_nodes)), 
+        int(len(unique_nodes)*self.mem_node_prob), replace=False)
+      sampled_nodes = np.array(unique_nodes)[idx] 
+      #     using sampled nodes, agg message again 
+      unique_nodes, unique_messages, unique_timestamps = \
+        self.message_aggregator.aggregate(
+          sampled_nodes,
+          messages)
+
+    # xzl sample --- works, but there's a better way above.
+    #print(len(unique_nodes), type(unique_nodes), type(unique_messages))
+    # if len(unique_nodes) > 0:
+    #   p = 0.5
+    #   idx = np.random.choice(np.arange(len(unique_nodes)), len(unique_nodes)>>1, replace=False)
+    #   #print(len(unique_nodes), idx, type(idx), type(unique_nodes), type(unique_messages))
+    #   unique_nodes = np.array(unique_nodes)[idx] 
+    #   unique_messages = torch.from_numpy(np.array(unique_messages.cpu())[idx]).to('cuda:0')
+    #   unique_timestamps =torch.from_numpy(np.array(unique_timestamps.cpu())[idx]).to('cuda:0')
+
     if len(unique_nodes) > 0:
       unique_messages = self.message_function.compute_message(unique_messages)
-
+    
+    # print(f"\t\t xzl: after sampling. #unique_nodes {len(unique_nodes)}")
     # Update the memory with the aggregated messages
     self.memory_updater.update_memory(unique_nodes, unique_messages,
-                                      timestamps=unique_timestamps)
+                                     timestamps=unique_timestamps)
 
+    # xzl: sample...  
+    # if len(unique_nodes) > 0:
+    #   p = 0.5
+    #   idx = np.random.choice(np.arange(len(unique_nodes)), len(unique_nodes)>>1, replace=False)
+    #   #print(len(unique_nodes), idx, type(idx), type(unique_nodes), type(unique_messages))
+    #   self.memory_updater.update_memory(np.array(unique_nodes)[idx], 
+    #   np.array(unique_messages)[idx],
+    #                                     timestamps=np.array(unique_timestamps)[idx])
+
+  # xzl) to be called prior to embedding update. 
+  #       cal updated mem per last batch messages (?). not updating the memory state
   def get_updated_memory(self, nodes, messages):
     # Aggregate messages for the same nodes
     unique_nodes, unique_messages, unique_timestamps = \
       self.message_aggregator.aggregate(
         nodes,
         messages)
+
+    # xzl: sampling nodes TODO -- deterministic sampling
+    if self.mem_node_prob < 0.9999:
+      idx = np.random.choice(np.arange(len(unique_nodes)), 
+        int(len(unique_nodes)*self.mem_node_prob), replace=False)
+      sampled_nodes = np.array(unique_nodes)[idx] 
+      #     using sampled nodes, agg message again 
+      unique_nodes, unique_messages, unique_timestamps = \
+        self.message_aggregator.aggregate(
+          sampled_nodes,
+          messages)
 
     if len(unique_nodes) > 0:
       unique_messages = self.message_function.compute_message(unique_messages)

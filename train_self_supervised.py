@@ -74,7 +74,15 @@ parser.add_argument('--dyrep', action='store_true',
 
 # xzl 
 parser.add_argument('--inference_only', action='store_true',
-                    help='xzl:do inf only, load a trained model')
+                    help='xzl:do infer only, load a trained model')
+parser.add_argument('--not_load_mem', action='store_true',
+                    help='xzl:when load a trained model, not loading the memory state')
+parser.add_argument('--train_split', type=float, default=0.7, help='train split. validation fixed 0.15. remaining for testing')
+parser.add_argument('--mem_node_prob', type=float, default=1.0, help='%% of nodes that will have memory. default 1.0')
+parser.add_argument('--fixed_edge_feature', action='store_true', default=False,
+                    help="xzl:use fixed edge feature. the feature is the same as the source node's first edge")
+parser.add_argument('--use_fixed_times', action='store_true', default=False,
+                    help="xzl:use fixed timestamps sent to time encodings. the timestamp is cal as the avg of all ts in that batch")
 
 try:
   args = parser.parse_args()
@@ -97,7 +105,9 @@ TIME_DIM = args.time_dim
 USE_MEMORY = args.use_memory
 MESSAGE_DIM = args.message_dim
 MEMORY_DIM = args.memory_dim
-INFERENCE_ONLY = args.inference_only   # xzl
+# --- below xzl ---- #
+INFERENCE_ONLY = args.inference_only   
+TRAIN_SPLIT = args.train_split  
 
 Path("./saved_models/").mkdir(parents=True, exist_ok=True)
 Path("./saved_checkpoints/").mkdir(parents=True, exist_ok=True)
@@ -126,7 +136,8 @@ logger.info(args)
 # xzl)@new_node_val/test are nodes never showed up in training.
 node_features, edge_features, full_data, train_data, val_data, test_data, new_node_val_data, \
 new_node_test_data = get_data(DATA,
-                              different_new_nodes_between_val_and_test=args.different_new_nodes, randomize_features=args.randomize_features)
+                              different_new_nodes_between_val_and_test=args.different_new_nodes, randomize_features=args.randomize_features,
+                              train_split=TRAIN_SPLIT, fixed_edge_feat=args.fixed_edge_feature)
 
 # Initialize training neighbor finder to retrieve temporal graph
 train_ngh_finder = get_neighbor_finder(train_data, args.uniform)
@@ -156,7 +167,7 @@ else:
   device_string = 'cuda:{}'.format(GPU) if torch.cuda.is_available() else 'cpu'
 device = torch.device(device_string)
 
-# Compute time statistics
+# Compute time statistics   xzl: needed by tgn model --- to normalized time diff for encoding
 mean_time_shift_src, std_time_shift_src, mean_time_shift_dst, std_time_shift_dst = \
   compute_time_statistics(full_data.sources, full_data.destinations, full_data.timestamps)
 
@@ -180,7 +191,8 @@ for i in range(args.n_runs):
             mean_time_shift_dst=mean_time_shift_dst, std_time_shift_dst=std_time_shift_dst,
             use_destination_embedding_in_message=args.use_destination_embedding_in_message,
             use_source_embedding_in_message=args.use_source_embedding_in_message,
-            dyrep=args.dyrep)
+            dyrep=args.dyrep,
+            mem_node_prob=args.mem_node_prob, use_fixed_times=args.use_fixed_times)
   criterion = torch.nn.BCELoss()
   optimizer = torch.optim.Adam(tgn.parameters(), lr=LEARNING_RATE)
   tgn = tgn.to(device)
@@ -189,6 +201,7 @@ for i in range(args.n_runs):
     num_instance = len(train_data.sources) # xzl: instances == # of rows in training? 
     num_batch = math.ceil(num_instance / BATCH_SIZE)
 
+    logger.info('train split: {}'.format(TRAIN_SPLIT))
     logger.info('num of training instances: {}'.format(num_instance))
     logger.info('num of batches per epoch: {}'.format(num_batch))
     idx_list = np.arange(num_instance)
@@ -346,7 +359,9 @@ for i in range(args.n_runs):
       else:
         torch.save(tgn.state_dict(), get_checkpoint_path(epoch))
   else:   # xzl: INFERENCE_ONLY. the model must exist
-    tgn.load_state_dict(torch.load(MODEL_SAVE_PATH))  
+    tgn.load_state_dict(torch.load(MODEL_SAVE_PATH)) 
+    if args.not_load_mem:
+      tgn.memory.clear_memory()  
 
   # Training has finished, we have loaded the best model, and we want to backup its current
   # memory (which has seen validation edges) so that it can also be used when testing on unseen
@@ -383,7 +398,12 @@ for i in range(args.n_runs):
       "test_ap": test_ap,
       "new_node_test_ap": nn_test_ap,
     }, open(results_path, "wb"))
-    logger.info('Inference done')
+    # save memory as file, for inspection
+    mem, last_update, msgs = tgn.memory.backup_memory()
+    path = './data/inference-only-memory.npy'
+    np.save(path, np.array(mem.cpu()))
+    logger.info('Inference done. mem saved to {}'.format(path))
+
   else: 
     # Save results for this run
     pickle.dump({

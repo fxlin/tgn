@@ -78,6 +78,12 @@ crashlytics.properties
 crashlytics-build.properties
 fabric.properties
 
+traces/
+
+.idea/
+
+*.ipynb
+
 # Editor-based Rest Client
 .idea/httpRequests
 

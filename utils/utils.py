@@ -137,6 +137,8 @@ class NeighborFinder:
     """
     Given a list of users ids and relative cut times, extracts a sampled temporal neighborhood of each user in the list.
 
+    xzl) *before* cut times. by default, return most recent temp neighbors (up to  @n_neighbors)
+
     Params
     ------
     src_idx_l: List[int]

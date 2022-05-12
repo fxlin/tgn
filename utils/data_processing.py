@@ -53,10 +53,10 @@ def get_data_node_classification(dataset_name, use_validation=False):
 
   return full_data, node_features, edge_features, train_data, val_data, test_data
 
-# xzl) load from files (saved by  preprosee_data.py) 
+# xzl) load from files (saved by preprosee_data.py) 
 #   parse and return multi @Data sets ... this is the entry func. 
 #   each Data stored in multiple columns (src,dest,timestamps..), time ordered.
-def get_data(dataset_name, different_new_nodes_between_val_and_test=False, randomize_features=False):
+def get_data(dataset_name, different_new_nodes_between_val_and_test=False, randomize_features=False, train_split=0.70, fixed_edge_feat=False):
   ### Load data and train val test split
   graph_df = pd.read_csv('./data/ml_{}.csv'.format(dataset_name)) #xzl: dataframe from csv
   edge_features = np.load('./data/ml_{}.npy'.format(dataset_name))
@@ -72,7 +72,9 @@ def get_data(dataset_name, different_new_nodes_between_val_and_test=False, rando
     node_features = np.random.rand(node_features.shape[0], node_features.shape[1])
 
   # xzl) split dataset by time
-  val_time, test_time = list(np.quantile(graph_df.ts, [0.70, 0.85]))
+  # val_time, test_time = list(np.quantile(graph_df.ts, [0.70, 0.85]))
+  assert train_split > 0 and train_split + 0.15 < 1
+  val_time, test_time = list(np.quantile(graph_df.ts, [train_split, train_split + 0.15]))    # xzl
 
   sources = graph_df.u.values
   destinations = graph_df.i.values
@@ -80,12 +82,22 @@ def get_data(dataset_name, different_new_nodes_between_val_and_test=False, rando
   labels = graph_df.label.values
   timestamps = graph_df.ts.values
 
+  if fixed_edge_feat:
+    # xzl ... load fixed edges
+    edge_idxs_fixed = np.load('./data/ml_{}_approx.npy'.format(dataset_name))
+    print('xzl: edge_idxs_fixed', edge_idxs_fixed, edge_idxs_fixed[58886])   # reddit edge_idxs_fixed[58886] should be 12
+    edge_idxs = edge_idxs_fixed
+
   full_data = Data(sources, destinations, timestamps, edge_idxs, labels)
 
   random.seed(2020)
 
   node_set = set(sources) | set(destinations)
   n_total_unique_nodes = len(node_set)
+
+  # xzl: 
+  # for n in set(sources):
+  #   msk = graph_df.u.map(lambda x: x == n).values
 
   # Compute nodes which appear at test time
   test_node_set = set(sources[timestamps > val_time]).union(
@@ -213,36 +225,39 @@ def compute_time_statistics(sources, destinations, timestamps):
     interval_sources[src].append(c_timestamp-ts)
     #interval_sources[src] = [float("inf")] # only interaction once. max
   '''
-  print("--- xzl")
-  #interval_medians = dict()
-  interval_medians = []
-  intervals = []
-  for s,i in interval_sources.items():
-    #interval_medians[s] = np.median(i)
-    interval_medians.append(np.median(i))
-    intervals += i
-  edge_cnt = []
-  #for s,i in interval_sources.items():
-  #  interval_cnt.append(len(i))
-  for s,i in src_edge_cnt.items():
-    edge_cnt.append(i)
-  hist = np.histogram(edge_cnt, bins=20)
-  print('hist for per-node edge cnt', hist)
-  #print(np.histogram(edge_cnt, bins=[0,1,2,3,4,5,10,100,1000,10000]))
-  plt.hist(edge_cnt, bins=20)
-  plt.savefig("hist-edge-cnt.png")
-    
-  hist2 = np.histogram(intervals, bins=20)
-  print("intervals for all nodes", hist2)
 
-  hist2 = np.histogram(interval_medians, bins=20)
-  print("median intervals for all nodes", hist2)
-  
-  mask = [x < hist[1][1] for x in src_edge_cnt]
-  #print(mask)
-  masked_medians=np.array(interval_medians)[mask]
-  hist2 = np.histogram(masked_medians, bins=20)
-  print("median intervals for nodes w/ fewer edges", hist2)
+  print_stat = False
+  if print_stat:
+    print("--- xzl ---")
+    #interval_medians = dict()
+    interval_medians = []
+    intervals = []
+    for s,i in interval_sources.items():
+      #interval_medians[s] = np.median(i)
+      interval_medians.append(np.median(i))
+      intervals += i
+    edge_cnt = []
+    #for s,i in interval_sources.items():
+    #  interval_cnt.append(len(i))
+    for s,i in src_edge_cnt.items():
+      edge_cnt.append(i)
+    hist = np.histogram(edge_cnt, bins=20)
+    print('hist for per-node edge cnt', hist)
+    #print(np.histogram(edge_cnt, bins=[0,1,2,3,4,5,10,100,1000,10000]))
+    plt.hist(edge_cnt, bins=20)
+    plt.savefig("hist-edge-cnt.png")
+      
+    hist2 = np.histogram(intervals, bins=20)
+    print("intervals for all nodes", hist2)
+
+    hist2 = np.histogram(interval_medians, bins=20)
+    print("median intervals for all nodes", hist2)
+    
+    mask = [x < hist[1][1] for x in src_edge_cnt]
+    #print(mask)
+    masked_medians=np.array(interval_medians)[mask]
+    hist2 = np.histogram(masked_medians, bins=20)
+    print("median intervals for nodes w/ fewer edges", hist2)
 
   assert len(all_timediffs_src) == len(sources)
   assert len(all_timediffs_dst) == len(sources)

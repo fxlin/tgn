@@ -33,9 +33,11 @@ class Memory(nn.Module):
     # Treat memory as parameter so that it is saved and loaded together with the model
     self.memory = nn.Parameter(torch.zeros((self.n_nodes, self.memory_dimension)).to(self.device),
                                requires_grad=False)
+    # xzl: last update time (per node)??                              
     self.last_update = nn.Parameter(torch.zeros(self.n_nodes).to(self.device),
                                     requires_grad=False)
 
+    # xzl: the msgs are only for the prev batch.
     self.messages = defaultdict(list)
 
   def store_raw_messages(self, nodes, node_id_to_messages):
@@ -80,3 +82,10 @@ class Memory(nn.Module):
   def clear_messages(self, nodes):
     for node in nodes:
       self.messages[node] = []
+
+  # xzl: clear all state, last batch msgs
+  def clear_memory(self): 
+    self.memory.data.zero_()
+    self.last_update.data.zero_()
+    for k, v in self.messages.items():
+        self.messages[k] = []
