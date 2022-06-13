@@ -1,0 +1,276 @@
+
+# inference only... sample nodes to update memory. otherwise unchanged....
+
+p=0.5
+INFO:root:Test statistics: Old nodes -- auc: 0.9875161909419945, ap: 0.9877665563415556   
+INFO:root:Test statistics: New nodes -- auc: 0.9744030092592593, ap: 0.975150330203572    
+INFO:root:Inference done                                                                  
+
+p=0.1
+INFO:root:Test statistics: Old nodes -- auc: 0.9874098587305822, ap: 0.9877061470380177 
+INFO:root:Test statistics: New nodes -- auc: 0.9733457601095994, ap: 0.974450798392643  
+INFO:root:Inference done                                                                
+
+p=0.01
+INFO:root:Test statistics: Old nodes -- auc: 0.987212741503433, ap: 0.9875462116753816  
+INFO:root:Test statistics: New nodes -- auc: 0.972604934334845, ap: 0.9739593696071543  
+INFO:root:Inference done                                                                
+
+# using fixed msgs.. inference only
+INFO:root:Test statistics: Old nodes -- auc: 0.9866520157579916, ap: 0.9870059651607394  
+INFO:root:Test statistics: New nodes -- auc: 0.9715667729591836, ap: 0.9728392510887739  
+INFO:root:Inference done                                                                 
+
+
+total: 672k interactions. 
+20% training ---> 437k for testing
+
+# train_split test ... (validation always 15%)
+10% training + validation
+INFO:root:Test statistics: Old nodes -- auc: 0.9735170380487106, ap: 0.9742559782980991 
+INFO:root:Test statistics: New nodes -- auc: 0.9707290578290456, ap: 0.9709860856589708 
+
+python3 train_self_supervised.py -d reddit --use_memory --prefix tgn-attn-reddit-train_split-0.2 --n_runs 1 --train_split 0.2 --gpu 3
+
+20% training 
+INFO:root:Test statistics: Old nodes -- auc: 0.979058503679419, ap: 0.979397478257974  
+INFO:root:Test statistics: New nodes -- auc: 0.9745268533470591, ap: 0.975324121973741 
+
+50% training
+
+python3 train_self_supervised.py -d reddit --use_memory \
+--prefix tgn-attn-reddit-train_split-0.5 \
+--n_runs 1 \
+--train_split 0.5 
+
+INFO:root:Test statistics: Old nodes -- auc: 0.9846436825946225, ap: 0.984773576316333       
+INFO:root:Test statistics: New nodes -- auc: 0.9860988022728471, ap: 0.9861938122344794      
+
+
+python3 train_self_supervised.py -d reddit --use_memory \
+--prefix tgn-attn-reddit-train_split-0.5 \
+--n_runs 1 \
+--train_split 0.5 \
+--inference_only 
+
+# inference only, train_split 0.2
+python3 train_self_supervised.py -d reddit --use_memory --prefix tgn-attn-reddit-train_split-0.2 --n_runs 1 --train_split 0.2 --inference_only
+full memory...
+INFO:root:Test statistics: Old nodes -- auc: 0.978678806843211, ap: 0.9789588916874996
+INFO:root:Test statistics: New nodes -- auc: 0.9744899299685996, ap: 0.9751791411580655
+
+p=0 (no new memory ... actually helps accuracy???)
+INFO:root:Test statistics: Old nodes -- auc: 0.9808671736104053, ap: 0.9812419518299494
+INFO:root:Test statistics: New nodes -- auc: 0.9745478420536743, ap: 0.9754118207630014
+
+p=0.5 ... almost same as p=0??
+INFO:root:Test statistics: Old nodes -- auc: 0.9805068779438174, ap: 0.9809693413063092
+INFO:root:Test statistics: New nodes -- auc: 0.9758250456882902, ap: 0.9763968502967371
+
+full memory, fixed messages
+INFO:root:Test statistics: Old nodes -- auc: 0.9760174233054341, ap: 0.9764350004194543 
+INFO:root:Test statistics: New nodes -- auc: 0.9660166108361448, ap: 0.9677980236283487 
+
+-------------------
+
+
+clear memory, fixed messages, then full memory, p=1. worse than p=0.5??                                                                                          
+INFO:root:Test statistics: Old nodes -- auc: 0.9737843936724158, ap: 0.9746712536117408   
+INFO:root:Test statistics: New nodes -- auc: 0.9597472928751409, ap: 0.961851237746362    
+
+clear memory, fixed messages, then p=0.5 for memory nodes
+INFO:root:Test statistics: Old nodes -- auc: 0.9735758875221668, ap: 0.9749422532608072
+INFO:root:Test statistics: New nodes -- auc: 0.9602452155590647, ap: 0.963125254270161
+
+p=.4
+
+python3 train_self_supervised.py -d reddit --use_memory --prefix tgn-attn-reddit-train_split-0.2 --n_runs 1 \
+--train_split 0.2 \
+--mem_node_prob 0.4 \
+--fixed_edge_feature \
+--inference_only 
+
+INFO:root:Test statistics: Old nodes -- auc: 0.9731159622683068, ap: 0.9746237876496391 
+INFO:root:Test statistics: New nodes -- auc: 0.9588540682858347, ap: 0.9621280008194614 
+
+p=.2
+INFO:root:Test statistics: Old nodes -- auc: 0.969678808396304, ap: 0.9717706994678902
+INFO:root:Test statistics: New nodes -- auc: 0.9528923168063553, ap: 0.9576504804981762
+
+clear memory, fixed messages, then p=0.1 for memory nodes
+INFO:root:Test statistics: Old nodes -- auc: 0.9634265544345046, ap: 0.9665279732742312
+INFO:root:Test statistics: New nodes -- auc: 0.941348987624933, ap: 0.9484120613796082
+
+p=.01
+INFO:root:Test statistics: Old nodes -- auc: 0.9109331802830583, ap: 0.9230843360861111
+INFO:root:Test statistics: New nodes -- auc: 0.863836179780352, ap: 0.8843541447126891
+
+python3 train_self_supervised.py -d reddit --use_memory --prefix tgn-attn-reddit-train_split-0.2 --n_runs 1 --train_split 0.2 --inference_only --mem_node_prob 0.4
+python3 train_self_supervised.py -d reddit --use_memory --prefix tgn-attn-reddit-train_split-0.2 --n_runs 1 --train_split 0.2 --inference_only --mem_node_prob 0.2
+python3 train_self_supervised.py -d reddit --use_memory --prefix tgn-attn-reddit-train_split-0.2 --n_runs 1 --train_split 0.2 --inference_only --mem_node_prob 0.01
+
+-------------------
+not using fixed messages (i.e. exact messages)
+p=.4
+
+python3 train_self_supervised.py -d reddit --use_memory --prefix tgn-attn-reddit-train_split-0.2 --n_runs 1 \
+--train_split 0.2 \
+--mem_node_prob 0.4 \
+--inference_only 
+
+INFO:root:Test statistics: Old nodes -- auc: 0.976916589082602, ap: 0.9777956648053028  
+INFO:root:Test statistics: New nodes -- auc: 0.9676402599271432, ap: 0.9693149178980139 
+
+p=.2
+INFO:root:Test statistics: Old nodes -- auc: 0.974907186726983, ap: 0.9762474087499228
+INFO:root:Test statistics: New nodes -- auc: 0.9620652860805907, ap: 0.96508288699335
+
+p=.01
+
+
+
+
+python3 train_self_supervised.py -d reddit --use_memory --prefix tgn-attn-reddit-train_split-0.5 --n_runs 1 \
+--train_split 0.5 --inference_only
+
+INFO:root:Test statistics: Old nodes -- auc: 0.9783951770332098, ap: 0.9789601917662841
+INFO:root:Test statistics: New nodes -- auc: 0.9750065878289301, ap: 0.9754134411705285
+INFO:root:Inference done. mem saved to ./data/inference-only-memory.npy                
+
+
+
+python3 train_self_supervised.py -d reddit --use_memory --prefix tgn-attn-reddit-train_split-0.5 --n_runs 1 \
+--train_split 0.5 \
+--mem_node_prob 0.4 \
+--inference_only 
+
+INFO:root:Test statistics: Old nodes -- auc: 0.9721457805029513, ap: 0.9732630511085466
+INFO:root:Test statistics: New nodes -- auc: 0.9672153377630122, ap: 0.9683733139856877
+
+
+# with prev memory --- high accuracy!!
+python3 train_self_supervised.py -d reddit --use_memory --prefix tgn-attn-reddit-train_split-0.5 --n_runs 1 --train_split 0.5 --mem_node_prob 0.4 --fixed_edge_feature --inference_only
+INFO:root:Test statistics: Old nodes -- auc: 0.9832126788086898, ap: 0.9834342394691508 
+INFO:root:Test statistics: New nodes -- auc: 0.9831217397036334, ap: 0.9835332401326426 
+
+# ... not load memory ...
+ python3 train_self_supervised.py -d reddit --use_memory --prefix tgn-attn-reddit-train_split-0.5 --n_runs 1 --train_split 0.5 --mem_node_prob 0.4 --fixed_edge_feature --not_load_mem --inference_only
+INFO:root:Test statistics: Old nodes -- auc: 0.9716826708275609, ap: 0.9735510250907564
+INFO:root:Test statistics: New nodes -- auc: 0.9729646851763961, ap: 0.975532502162382
+
+# ... with fixed times...
+python3 train_self_supervised.py -d reddit --use_memory --prefix tgn-attn-reddit-train_split-0.5 --n_runs 1 --train_split 0.5 --mem_node_prob 0.4 --fixed_edge_feature --not_load_mem --inference_only --use_fixed_times
+INFO:root:Test statistics: Old nodes -- auc: 0.9712728276613682, ap: 0.9723147391298408
+INFO:root:Test statistics: New nodes -- auc: 0.9662221286188893, ap: 0.9681251466984034
+
+# ... with mem loaded
+python3 train_self_supervised.py -d reddit --use_memory --prefix tgn-attn-reddit-train_split-0.5 --n_runs 1 --train_split 0.5 --mem_node_prob 0.4 --fixed_edge_feature --inference_only --use_fixed_times
+INFO:root:Test statistics: Old nodes -- auc: 0.9847742960403658, ap: 0.9840850554472114
+INFO:root:Test statistics: New nodes -- auc: 0.9833134221905816, ap: 0.9825308640105482
+
+# ... trains split .2
+python3 train_self_supervised.py -d reddit --use_memory --prefix tgn-attn-reddit-train_split-0.2 --n_runs 1 --train_split 0.2 --mem_node_prob 0.4 \
+--fixed_edge_feature --inference_only --use_fixed_times
+
+INFO:root:Namespace(data='reddit', bs=200, prefix='tgn-attn-reddit-train_split-0.2', n_degree=10, n_head=2, n_epoch=50, n_layer=1, lr=0.0001, patience=5, n_runs=1, drop_out=0.1, gpu=0, node_dim=100, time_dim=100, backprop_every=1, use_memory=True, embedding_module='graph_attention', message_function='identity', memory_updater='gru', aggregator='last', memory_update_at_end=False, message_dim=100, memory_dim=172, different_new_nodes=False, uniform=False, randomize_features=False, use_destination_embedding_in_message=False, use_source_embedding_in_message=False, dyrep=False, inference_only=True, not_load_mem=False, train_split=0.2, mem_node_prob=0.4, fixed_edge_feature=True, use_fixed_times=True)
+xzl: edge features shape (672448, 172)
+xzl: edge_idxs_fixed [    1     2     3 ...  1993    11 11093] 12
+The dataset has 672447 interactions, involving 10984 different nodes
+The training dataset has 112660 interactions, involving 8476 different nodes
+The validation dataset has 100867 interactions, involving 9761 different nodes
+The test dataset has 437090 interactions, involving 10865 different nodes
+The new node validation dataset has 21344 interactions, involving 3612 different nodes
+The new node test dataset has 132791 interactions, involving 5731 different nodes
+1098 nodes were used for the inductive testing, i.e. are never seen during training
+INFO:root:Test statistics: Old nodes -- auc: 0.9798751337072054, ap: 0.9795938344887949
+INFO:root:Test statistics: New nodes -- auc: 0.9712496665819894, ap: 0.9718252152207933
+INFO:root:Inference done. mem saved to ./data/inference-only-memory.npy
+
+# ---------- wikipedia -------------
+
+# training 
+python3 train_self_supervised.py -d wikipedia --use_memory \
+--prefix tgn-attn-wikipedia-train_split-0.5 \
+--n_runs 1 \
+--train_split 0.5 
+INFO:root:Test statistics: Old nodes -- auc: 0.9826141229493011, ap: 0.9833886639249383  
+INFO:root:Test statistics: New nodes -- auc: 0.9801726028910492, ap: 0.9814534746716231  
+
+# --- inf, fully loaded
+python3 train_self_supervised.py -d wikipedia --use_memory \
+--prefix tgn-attn-wikipedia-train_split-0.5 \
+--n_runs 1 \
+--train_split 0.5 \
+--inference_only
+INFO:root:Test statistics: Old nodes -- auc: 0.982164895354047, ap: 0.9830739990443865   
+INFO:root:Test statistics: New nodes -- auc: 0.9796725805212021, ap: 0.9810855189384718  
+
+# ... not loading memory 
+python3 train_self_supervised.py -d wikipedia --use_memory \
+--prefix tgn-attn-wikipedia-train_split-0.5 \
+--n_runs 1 \
+--train_split 0.5 \
+--inference_only \
+--not_load_mem
+INFO:root:Test statistics: Old nodes -- auc: 0.9765751191753261, ap: 0.9791391594371347 
+INFO:root:Test statistics: New nodes -- auc: 0.9718040058626829, ap: 0.9750738429656323 
+
+# ... and use partial memory 
+python3 train_self_supervised.py -d wikipedia --use_memory \
+--prefix tgn-attn-wikipedia-train_split-0.5 \
+--n_runs 1 \
+--train_split 0.5 \
+--inference_only \
+--not_load_mem \
+--mem_node_prob 0.4
+INFO:root:Test statistics: Old nodes -- auc: 0.9662552390830449, ap: 0.9704575235431047
+INFO:root:Test statistics: New nodes -- auc: 0.962645950340374, ap: 0.9673043644408413
+
+
+# ... use fixed times.. really bad??
+python3 train_self_supervised.py -d wikipedia --use_memory \
+--prefix tgn-attn-wikipedia-train_split-0.5 \
+--n_runs 1 \
+--train_split 0.5 \
+--inference_only \
+--not_load_mem \
+--mem_node_prob 0.4 \
+--use_fixed_times
+INFO:root:Test statistics: Old nodes -- auc: 0.9352930123300418, ap: 0.9401714992547016
+INFO:root:Test statistics: New nodes -- auc: 0.9126870631065375, ap: 0.9191357680783416
+
+
+# full memory (not loading old mem), fixed times
+python3 train_self_supervised.py -d wikipedia --use_memory \
+--prefix tgn-attn-wikipedia-train_split-0.5 \
+--n_runs 1 \
+--train_split 0.5 \
+--inference_only \
+--not_load_mem \
+--use_fixed_times
+INFO:root:Test statistics: Old nodes -- auc: 0.9618508987424391, ap: 0.9654743163560388
+INFO:root:Test statistics: New nodes -- auc: 0.9464355313407399, ap: 0.9516808025169233
+
+
+# everything but using fixed times... still quite sensitive
+python3 train_self_supervised.py -d wikipedia --use_memory \
+--prefix tgn-attn-wikipedia-train_split-0.5 \
+--n_runs 1 \
+--train_split 0.5 \
+--inference_only \
+--use_fixed_times
+INFO:root:Test statistics: Old nodes -- auc: 0.9699372105972875, ap: 0.9710745846953494
+INFO:root:Test statistics: New nodes -- auc: 0.9608583610966738, ap: 0.9638792731150918
+
+# everything but using fixed edge features
+python3 train_self_supervised.py -d wikipedia --use_memory \
+--prefix tgn-attn-wikipedia-train_split-0.5 \
+--n_runs 1 \
+--train_split 0.5 \
+--inference_only \
+--fixed_edge_feature
+
+INFO:root:Test statistics: Old nodes -- auc: 0.9774514323657136, ap: 0.9789840520262253
+INFO:root:Test statistics: New nodes -- auc: 0.973251496668809, ap: 0.9752819832469373 
+
+
